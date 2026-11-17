@@ -1,0 +1,115 @@
+
+name: GAMER PC CLOUD
+
+on:
+  workflow_dispatch:
+
+jobs:
+  gamer-pc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Actualizar Linux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xfce4 \
+            xfce4-goodies \
+            tigervnc-standalone-server \
+            tigervnc-tools \
+            dbus-x11 \
+            curl \
+            wget \
+            gpg
+
+      - name: Instalar Ngrok
+        run: |
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+            | sudo gpg --dearmor -o /etc/apt/keyrings/ngrok.gpg
+
+          echo "deb [signed-by=/etc/apt/keyrings/ngrok.gpg] https://ngrok-agent.s3.amazonaws.com buster main" \
+            | sudo tee /etc/apt/sources.list.d/ngrok.list
+
+          sudo apt-get update
+          sudo apt-get install -y ngrok
+
+      - name: Configurar escritorio XFCE
+        run: |
+          mkdir -p ~/.vnc
+
+          cat > ~/.vnc/xstartup <<'EOF'
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          exec startxfce4
+          EOF
+
+          chmod +x ~/.vnc/xstartup
+
+      - name: Configurar contraseña VNC
+        env:
+          VNC_PASSWORD: ${{ secrets.VNC_PASSWORD }}
+        run: |
+          if [ -z "$VNC_PASSWORD" ]; then
+            echo "Falta configurar VNC_PASSWORD"
+            exit 1
+          fi
+
+          printf '%s\n' "$VNC_PASSWORD" \
+            | vncpasswd -f > ~/.vnc/passwd
+
+          chmod 600 ~/.vnc/passwd
+
+      - name: Iniciar escritorio remoto
+        run: |
+          tigervncserver :1 \
+            -geometry 1280x800 \
+            -depth 24 \
+            -localhost yes \
+            -SecurityTypes VncAuth
+
+          sleep 5
+
+      - name: Conectar Ngrok
+        env:
+          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+        run: |
+          if [ -z "$NGROK_AUTHTOKEN" ]; then
+            echo "Falta configurar NGROK_AUTHTOKEN"
+            exit 1
+          fi
+
+          ngrok config add-authtoken "$NGROK_AUTHTOKEN"
+
+          nohup ngrok tcp 5901 \
+            --log=stdout \
+            --log-format=logfmt \
+            > /tmp/ngrok.log 2>&1 &
+
+          for i in $(seq 1 30); do
+            sleep 2
+            ADDRESS=$(grep -oE 'url=tcp://[^ ]+' \
+              /tmp/ngrok.log | tail -1 | cut -d= -f2-)
+
+            if [ -n "$ADDRESS" ]; then
+              break
+            fi
+          done
+
+          if [ -z "$ADDRESS" ]; then
+            cat /tmp/ngrok.log
+            exit 1
+          fi
+
+          echo "================================"
+          echo "PC GAMER VIRTUAL INICIADA"
+          echo "DIRECCION VNC: $ADDRESS"
+          echo "PUERTO: 5901"
+          echo "================================"
+
+      - name: Mantener PC encendida
+        run: |
+          echo "Escritorio virtual activo"
+          sleep infinity
